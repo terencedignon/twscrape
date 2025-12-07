@@ -81,6 +81,43 @@ class TextLink(JSONTrait):
 
 
 @dataclass
+class AccountAbout(JSONTrait):
+    screen_name: str
+    name: str
+    rest_id: int
+    account_based_in: str | None
+    location_accurate: bool | None
+    affiliate_username: str | None
+    source: str | None
+    username_changes: int | None
+    username_last_changed_at: int | None
+    is_identity_verified: bool | None
+    verified_since_msec: int | None
+
+    @staticmethod
+    def parse(obj: dict):
+        about = obj.get("about_profile") or {}
+        core = obj.get("core") or {}
+        username_changes = about.get("username_changes", {}).get("count")
+        username_last_changed = about.get("username_changes", {}).get("last_changed_at_msec")
+        verification = obj.get("verification_info", {}) or {}
+        reason = verification.get("reason", {}) or {}
+        return AccountAbout(
+            screen_name=core.get("screen_name", ""),
+            name=core.get("name", ""),
+            rest_id=int_or(obj, "rest_id"),
+            account_based_in=about.get("account_based_in"),
+            location_accurate=about.get("location_accurate"),
+            affiliate_username=about.get("affiliate_username"),
+            source=about.get("source"),
+            username_changes=int(username_changes) if username_changes is not None else None,
+            username_last_changed_at=int(username_last_changed) if username_last_changed is not None else None,
+            is_identity_verified=verification.get("is_identity_verified"),
+            verified_since_msec=int(reason.get("verified_since_msec")) if reason.get("verified_since_msec") else None,
+        )
+
+
+@dataclass
 class UserRef(JSONTrait):
     id: int
     id_str: str
@@ -127,6 +164,23 @@ class User(JSONTrait):
     blueType: str | None = None
     descriptionLinks: list[TextLink] = field(default_factory=list)
     pinnedIds: list[int] = field(default_factory=list)
+    # Additional fields from Twitter API
+    canDm: bool | None = None
+    following: bool | None = None
+    canMediaTag: bool | None = None
+    wantRetweets: bool | None = None
+    possiblySensitive: bool | None = None
+    defaultProfile: bool | None = None
+    defaultProfileImage: bool | None = None
+    hasCustomTimelines: bool | None = None
+    isTranslator: bool | None = None
+    normalFollowersCount: int | None = None
+    fastFollowersCount: int | None = None
+    translatorType: str | None = None
+    profileInterstitialType: str | None = None
+    profileImageShape: str | None = None
+    withheldInCountries: list[str] = field(default_factory=list)
+    hasGraduatedAccess: bool | None = None
     _type: str = "snscrape.modules.twitter.User"
 
     # todo:
@@ -152,7 +206,14 @@ class User(JSONTrait):
         favourites_count = legacy.get("favourites_count") or obj.get("favourites_count")
         listed_count = legacy.get("listed_count") or obj.get("listed_count")
         media_count = legacy.get("media_count") or obj.get("media_count")
-        location = legacy.get("location") or obj.get("location")
+
+        # Handle location - can be string or dict with 'location' key
+        location_raw = legacy.get("location") or obj.get("location")
+        if isinstance(location_raw, dict):
+            location = location_raw.get("location", "") or ""
+        else:
+            location = location_raw or ""
+
         profile_image_url = legacy.get("profile_image_url_https") or obj.get("profile_image_url_https")
         profile_banner_url = legacy.get("profile_banner_url") or obj.get("profile_banner_url")
         verified = legacy.get("verified") or obj.get("verified")
@@ -163,6 +224,24 @@ class User(JSONTrait):
         # is_blue_verified is at top level in new format
         blue = obj.get("is_blue_verified")
         blue_type = obj.get("verified_type")
+
+        # Additional fields (keeping custom additions from this fork)
+        can_dm = legacy.get("can_dm") or obj.get("can_dm")
+        following = legacy.get("following") or obj.get("following")
+        can_media_tag = legacy.get("can_media_tag") or obj.get("can_media_tag")
+        want_retweets = legacy.get("want_retweets") or obj.get("want_retweets")
+        possibly_sensitive = legacy.get("possibly_sensitive") or obj.get("possibly_sensitive")
+        default_profile = legacy.get("default_profile") or obj.get("default_profile")
+        default_profile_image = legacy.get("default_profile_image") or obj.get("default_profile_image")
+        has_custom_timelines = legacy.get("has_custom_timelines") or obj.get("has_custom_timelines")
+        is_translator = legacy.get("is_translator") or obj.get("is_translator")
+        normal_followers_count = legacy.get("normal_followers_count") or obj.get("normal_followers_count")
+        fast_followers_count = legacy.get("fast_followers_count") or obj.get("fast_followers_count")
+        translator_type = legacy.get("translator_type") or obj.get("translator_type")
+        profile_interstitial_type = legacy.get("profile_interstitial_type") or obj.get("profile_interstitial_type")
+        profile_image_shape = legacy.get("profile_image_shape") or obj.get("profile_image_shape")
+        withheld_in_countries = legacy.get("withheld_in_countries") or obj.get("withheld_in_countries", [])
+        has_graduated_access = legacy.get("has_graduated_access") or obj.get("has_graduated_access")
 
         return User(
             id=int(obj["id_str"]),
@@ -187,6 +266,23 @@ class User(JSONTrait):
             protected=protected,
             descriptionLinks=_parse_links({"entities": entities}, ["entities.description.urls", "entities.url.urls"]),
             pinnedIds=[int(x) for x in pinned_ids],
+            # Additional fields
+            canDm=can_dm,
+            following=following,
+            canMediaTag=can_media_tag,
+            wantRetweets=want_retweets,
+            possiblySensitive=possibly_sensitive,
+            defaultProfile=default_profile,
+            defaultProfileImage=default_profile_image,
+            hasCustomTimelines=has_custom_timelines,
+            isTranslator=is_translator,
+            normalFollowersCount=normal_followers_count,
+            fastFollowersCount=fast_followers_count,
+            translatorType=translator_type,
+            profileInterstitialType=profile_interstitial_type,
+            profileImageShape=profile_image_shape,
+            withheldInCountries=withheld_in_countries,
+            hasGraduatedAccess=has_graduated_access,
         )
 
 
@@ -224,6 +320,15 @@ class Tweet(JSONTrait):
     sourceLabel: str | None = None
     card: Union[None, "SummaryCard", "PollCard", "BroadcastCard", "AudiospaceCard"] = None
     possibly_sensitive: bool | None = None
+
+    # Additional fields from API
+    displayTextRange: list[int] | None = None
+    isQuoteStatus: bool = False
+    isTranslatable: bool = False
+    inReplyToScreenName: str | None = None
+    editControl: dict | None = None
+    voiceInfo: dict | None = None
+
     _type: str = "snscrape.modules.twitter.Tweet"
 
     # todo:
@@ -232,7 +337,13 @@ class Tweet(JSONTrait):
 
     @staticmethod
     def parse(obj: dict, res: dict):
-        tw_usr = User.parse(res["users"][obj["user_id_str"]])
+        # Handle missing user data gracefully
+        user_id_str = obj.get("user_id_str")
+        if not user_id_str or user_id_str not in res.get("users", {}):
+            # User data missing - skip this tweet
+            return None
+
+        tw_usr = User.parse(res["users"][user_id_str])
 
         rt_id_path = [
             "retweeted_status_id_str",
@@ -272,8 +383,8 @@ class Tweet(JSONTrait):
                 obj, ["entities.urls", "note_tweet.note_tweet_results.result.entity_set.urls"]
             ),
             viewCount=_get_views(obj, rt_obj or {}),
-            retweetedTweet=Tweet.parse(rt_obj, res) if rt_obj else None,
-            quotedTweet=Tweet.parse(qt_obj, res) if qt_obj else None,
+            retweetedTweet=Tweet.parse(rt_obj, res) if rt_obj and rt_obj.get("user_id_str") in res.get("users", {}) else None,
+            quotedTweet=Tweet.parse(qt_obj, res) if qt_obj and qt_obj.get("user_id_str") in res.get("users", {}) else None,
             place=Place.parse(obj["place"]) if obj.get("place") else None,
             coordinates=Coordinates.parse(obj),
             inReplyToTweetId=int_or(obj, "in_reply_to_status_id_str"),
@@ -285,6 +396,13 @@ class Tweet(JSONTrait):
             media=Media.parse(obj),
             card=_parse_card(obj, url),
             possibly_sensitive=obj.get("possibly_sensitive", None),
+            # Additional fields
+            displayTextRange=obj.get("display_text_range"),
+            isQuoteStatus=obj.get("is_quote_status", False),
+            isTranslatable=obj.get("is_translatable", False),
+            inReplyToScreenName=obj.get("in_reply_to_screen_name"),
+            editControl=obj.get("edit_control"),
+            voiceInfo=obj.get("voiceInfo"),
         )
 
         # issue #42 – restore full rt text
@@ -501,6 +619,22 @@ class Trend(JSONTrait):
             trend_url=TrendUrl.parse(obj["trend_url"]),
             trend_metadata=TrendMetadata.parse(obj["trend_metadata"]),
             grouped_trends=grouped_trends,
+        )
+
+
+@dataclass
+class Community(JSONTrait):
+    id: str
+    name: str
+    description: Optional[str] = None
+    _type: str = "community"
+
+    @staticmethod
+    def parse(obj: dict):
+        return Community(
+            id=obj.get("id_str", obj.get("id", "")),
+            name=obj.get("name", ""),
+            description=obj.get("description"),
         )
 
 
@@ -755,6 +889,8 @@ def _parse_items(rep: httpx.Response, kind: str, limit: int = -1):
 
         try:
             tmp = Cls.parse(x, obj)
+            if tmp is None:
+                continue
             if tmp.id not in ids:
                 ids.add(tmp.id)
                 yield tmp

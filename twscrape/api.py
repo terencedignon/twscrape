@@ -148,6 +148,52 @@ class API:
 
                 yield rep
 
+    async def _gql_items_with_cursor(
+        self, op: str, kv: dict, ft: dict | None = None, limit=-1, cursor_type="Bottom"
+    ):
+        """
+        Same as _gql_items but yields (response, cursor) tuples.
+        This allows callers to track pagination cursors for resumption.
+        """
+        queue, cur, cnt, active = op.split("/")[-1], None, 0, True
+        kv, ft = {**kv}, {**GQL_FEATURES, **(ft or {})}
+
+        async with QueueClient(self.pool, queue, self.debug, proxy=self.proxy) as client:
+            while active:
+                params = {"variables": kv, "features": ft}
+                if cur is not None:
+                    params["variables"]["cursor"] = cur
+                if queue in ("SearchTimeline", "ListLatestTweetsTimeline"):
+                    params["fieldToggles"] = {"withArticleRichContentState": False}
+                if queue in ("UserMedia",):
+                    params["fieldToggles"] = {"withArticlePlainText": False}
+
+                rep = await client.get(f"{GQL_URL}/{op}", params=encode_params(params))
+                if rep is None:
+                    return
+
+                obj = rep.json()
+                els = get_by_path(obj, "entries") or []
+                els = [
+                    x
+                    for x in els
+                    if not (
+                        x["entryId"].startswith("cursor-")
+                        or x["entryId"].startswith("messageprompt-")
+                    )
+                ]
+                next_cursor = self._get_cursor(obj, cursor_type)
+
+                rep, cnt, active = self._is_end(rep, queue, els, next_cursor, cnt, limit)
+                if rep is None:
+                    return
+
+                # Yield both response AND cursor for resumption
+                yield rep, next_cursor
+
+                # CRITICAL: Update cur for next iteration to advance pagination
+                cur = next_cursor
+
     async def _gql_item(self, op: str, kv: dict, ft: dict | None = None):
         ft = ft or {}
         queue = op.split("/")[-1]
@@ -300,6 +346,32 @@ class API:
                 for x in parse_users(rep.json(), limit):
                     yield x
 
+    async def followers_with_cursor(self, uid: int, limit=-1, kv: KV = None):
+        """
+        Same as followers but yields (user, cursor) tuples.
+
+        The cursor can be saved and passed back in kv={'cursor': saved_cursor}
+        to resume pagination from where you left off.
+
+        Example:
+            last_cursor = None
+            async for user, cursor in api.followers_with_cursor(user_id, limit=1000):
+                print(user.username)
+                last_cursor = cursor
+            # Save last_cursor to database for resumption
+        """
+        op = OP_Followers
+        kv = {
+            "userId": str(uid),
+            "count": 20,
+            "includePromotedContent": False,
+            **(kv or {}),
+        }
+        async with aclosing(self._gql_items_with_cursor(op, kv, limit=limit)) as gen:
+            async for rep, cursor in gen:
+                for user in parse_users(rep.json(), limit):
+                    yield user, cursor
+
     # verified_followers
 
     async def verified_followers_raw(self, uid: int, limit=-1, kv: KV = None):
@@ -341,6 +413,32 @@ class API:
             async for rep in gen:
                 for x in parse_users(rep.json(), limit):
                     yield x
+
+    async def following_with_cursor(self, uid: int, limit=-1, kv: KV = None):
+        """
+        Same as following but yields (user, cursor) tuples.
+
+        The cursor can be saved and passed back in kv={'cursor': saved_cursor}
+        to resume pagination from where you left off.
+
+        Example:
+            last_cursor = None
+            async for user, cursor in api.following_with_cursor(user_id, limit=500):
+                print(user.username)
+                last_cursor = cursor
+            # Save last_cursor to database for resumption
+        """
+        op = OP_Following
+        kv = {
+            "userId": str(uid),
+            "count": 20,
+            "includePromotedContent": False,
+            **(kv or {}),
+        }
+        async with aclosing(self._gql_items_with_cursor(op, kv, limit=limit)) as gen:
+            async for rep, cursor in gen:
+                for user in parse_users(rep.json(), limit):
+                    yield user, cursor
 
     # subscriptions
 
@@ -400,6 +498,34 @@ class API:
                 for x in parse_tweets(rep.json(), limit):
                     yield x
 
+    async def user_tweets_with_cursor(self, uid: int, limit=-1, kv: KV = None):
+        """
+        Same as user_tweets but yields (tweet, cursor) tuples for resumable pagination.
+
+        The cursor can be saved and passed back in kv={'cursor': saved_cursor}
+        to resume pagination from where you left off.
+
+        Example:
+            last_cursor = None
+            async for tweet, cursor in api.user_tweets_with_cursor(user_id, limit=1000):
+                print(tweet.rawContent)
+                last_cursor = cursor
+            # Save last_cursor to database for resumption
+        """
+        op = OP_UserTweets
+        kv = {
+            "userId": str(uid),
+            "count": 40,
+            "includePromotedContent": True,
+            "withQuickPromoteEligibilityTweetFields": True,
+            "withVoice": True,
+            **(kv or {}),
+        }
+        async with aclosing(self._gql_items_with_cursor(op, kv, limit=limit)) as gen:
+            async for rep, cursor in gen:
+                for tweet in parse_tweets(rep.json(), limit):
+                    yield tweet, cursor
+
     # user_tweets_and_replies
 
     async def user_tweets_and_replies_raw(self, uid: int, limit=-1, kv: KV = None):
@@ -421,6 +547,34 @@ class API:
             async for rep in gen:
                 for x in parse_tweets(rep.json(), limit):
                     yield x
+
+    async def user_tweets_and_replies_with_cursor(self, uid: int, limit=-1, kv: KV = None):
+        """
+        Same as user_tweets_and_replies but yields (tweet, cursor) tuples.
+
+        The cursor can be saved and passed back in kv={'cursor': saved_cursor}
+        to resume pagination from where you left off.
+
+        Example:
+            last_cursor = None
+            async for tweet, cursor in api.user_tweets_and_replies_with_cursor(user_id, limit=100):
+                print(tweet.rawContent)
+                last_cursor = cursor
+            # Save last_cursor to database for resumption
+        """
+        op = OP_UserTweetsAndReplies
+        kv = {
+            "userId": str(uid),
+            "count": 40,
+            "includePromotedContent": True,
+            "withCommunity": True,
+            "withVoice": True,
+            **(kv or {}),
+        }
+        async with aclosing(self._gql_items_with_cursor(op, kv, limit=limit)) as gen:
+            async for rep, cursor in gen:
+                for tweet in parse_tweets(rep.json(), limit):
+                    yield tweet, cursor
 
     # user_media
 

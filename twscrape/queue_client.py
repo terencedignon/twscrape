@@ -192,12 +192,16 @@ class QueueClient:
         # general api rate limit
         if limit_remaining == 0 and limit_reset > 0:
             logger.debug(f"Rate limited: {log_msg}")
+            # Log the raw response details for analysis
+            self._log_rate_limit_response(rep, err_msg, "normal_rate_limit")
             await self._close_ctx(limit_reset)
             raise HandledError()
 
         # no way to check is account banned in direct way, but this check should work
         if err_msg.startswith("(88) Rate limit exceeded") and limit_remaining > 0:
             logger.warning(f"Ban detected: {log_msg}")
+            # Log the raw response details for analysis
+            self._log_rate_limit_response(rep, err_msg, "error_88_ban")
             await self._close_ctx(-1, inactive=True, msg=err_msg)
             raise HandledError()
 
@@ -237,7 +241,15 @@ class QueueClient:
 
         if err_msg != "OK":
             logger.warning(f"API unknown error: {log_msg}")
+            # Log unknown API errors for analysis
+            self._log_rate_limit_response(rep, err_msg, "api_unknown_error")
             return  # ignore any other unknown errors
+
+        # Log successful requests (sampled to reduce volume)
+        # Sample 1 in 20 successful requests, or always log if remaining is low
+        import random
+        if limit_remaining < 20 or random.randint(1, 20) == 1:
+            self._log_rate_limit_response(rep, "OK", "success")
 
         try:
             rep.raise_for_status()
@@ -245,6 +257,102 @@ class QueueClient:
             logger.error(f"Unhandled API response code: {log_msg}")
             await self._close_ctx(utc.ts() + 60 * 15)  # 15 minutes
             raise HandledError()
+
+    def _log_rate_limit_response(self, rep: Response, err_msg: str, event_type: str):
+        """Log rate limit response details to a file for analysis"""
+        import json
+        from datetime import datetime
+        from pathlib import Path
+
+        # Create logs directory if it doesn't exist
+        log_dir = Path.home() / ".twscrape" / "rate_limit_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use a rotating log file (one per day)
+        log_file = log_dir / f"rate_limits_{datetime.now().strftime('%Y%m%d')}.jsonl"
+
+        # Parse response body to get raw errors
+        try:
+            response_body = rep.json()
+        except:
+            response_body = {"_raw": rep.text[:500]}  # Truncate if too long
+
+        # Extract raw errors array from response
+        raw_errors = response_body.get("errors", [])
+
+        # Parse URL to extract endpoint info
+        url_str = str(rep.url)
+        endpoint_name = "unknown"
+        if "/graphql/" in url_str:
+            parts = url_str.split("/graphql/")[1].split("/")
+            if len(parts) >= 2:
+                # Get just the operation name, remove query params
+                endpoint_name = parts[1].split("?")[0]
+
+        # Get all response headers
+        all_response_headers = dict(rep.headers)
+
+        # Get request details from the response object
+        request_details = {
+            "method": rep.request.method if hasattr(rep, 'request') else "N/A",
+            "url": str(rep.request.url) if hasattr(rep, 'request') else url_str,
+        }
+
+        # Get request headers we sent
+        request_headers = {}
+        if hasattr(rep, 'request') and hasattr(rep.request, 'headers'):
+            request_headers = dict(rep.request.headers)
+            # Extract key headers for summary
+            request_details["user_agent"] = request_headers.get("user-agent", "N/A")
+            request_details["authorization"] = request_headers.get("authorization", "N/A")[:50] + "..." if request_headers.get("authorization") else "N/A"
+            request_details["x_csrf_token"] = request_headers.get("x-csrf-token", "N/A")
+            request_details["x_client_transaction_id"] = request_headers.get("x-client-transaction-id", "N/A")
+            request_details["content_type"] = request_headers.get("content-type", "N/A")
+
+        # Extract rate limit headers
+        rate_limit_data = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": event_type,
+            "account": getattr(rep, "__username", "UNKNOWN"),
+            "status_code": rep.status_code,
+            "endpoint": endpoint_name,
+            "url": url_str,
+
+            # Request details (what we sent)
+            "request": {
+                "method": request_details.get("method", "N/A"),
+                "user_agent": request_details.get("user_agent", "N/A"),
+                "authorization_type": "Bearer" if "Bearer" in request_details.get("authorization", "") else "N/A",
+                "x_csrf_token": request_details.get("x_csrf_token", "N/A"),
+                "x_client_transaction_id": request_details.get("x_client_transaction_id", "N/A"),
+                "content_type": request_details.get("content_type", "N/A"),
+                "all_request_headers": request_headers,  # Full request headers
+            },
+
+            # Response details
+            "error_message_formatted": err_msg,
+            "raw_errors": raw_errors,  # Full error array from Twitter
+
+            # Rate limit headers
+            "rate_limit_headers": {
+                "limit": rep.headers.get("x-rate-limit-limit", "N/A"),
+                "remaining": rep.headers.get("x-rate-limit-remaining", "N/A"),
+                "reset": rep.headers.get("x-rate-limit-reset", "N/A"),
+            },
+
+            # All response headers (for debugging)
+            "response_headers": all_response_headers,
+
+            # Response body summary (first few keys)
+            "response_keys": list(response_body.keys()) if isinstance(response_body, dict) else [],
+        }
+
+        # Append to log file (JSONL format - one JSON object per line)
+        try:
+            with open(log_file, "a") as f:
+                f.write(json.dumps(rate_limit_data) + "\n")
+        except Exception as e:
+            logger.debug(f"Failed to log rate limit response: {e}")
 
     async def get(self, url: str, params: ReqParams = None) -> Response | None:
         return await self.req("GET", url, params=params)

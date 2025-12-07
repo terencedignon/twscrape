@@ -28,6 +28,8 @@ class Account(JSONTrait):
     proxy: str | None = None
     error_msg: str | None = None
     last_used: datetime | None = None
+    error_history: list[datetime] = field(default_factory=list)  # timestamps of errors
+    reactivation_priority: int = 0  # higher = more urgent to reactivate
     _tx: str | None = None
 
     @staticmethod
@@ -39,6 +41,8 @@ class Account(JSONTrait):
         doc["cookies"] = json.loads(doc["cookies"])
         doc["active"] = bool(doc["active"])
         doc["last_used"] = utc.from_iso(doc["last_used"]) if doc["last_used"] else None
+        doc["error_history"] = [utc.from_iso(ts) for ts in json.loads(doc.get("error_history", "[]"))]
+        doc["reactivation_priority"] = doc.get("reactivation_priority", 0)
         return Account(**doc)
 
     def to_rs(self):
@@ -48,6 +52,7 @@ class Account(JSONTrait):
         rs["headers"] = json.dumps(rs["headers"])
         rs["cookies"] = json.dumps(rs["cookies"])
         rs["last_used"] = rs["last_used"].isoformat() if rs["last_used"] else None
+        rs["error_history"] = json.dumps([ts.isoformat() for ts in rs["error_history"]])
         return rs
 
     def make_client(self, proxy: str | None = None) -> AsyncClient:

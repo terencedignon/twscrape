@@ -1,7 +1,7 @@
 import asyncio
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TypedDict
 
 from fake_useragent import UserAgent
@@ -334,6 +334,64 @@ class AccountsPool:
         WHERE username = :username
         """
         await execute(self._db_file, qs, {"username": username, "error_msg": error_msg})
+
+    async def record_error(self, username: str, error_msg: str | None = None, max_errors_per_hour: int = 5):
+        """
+        Record an error for an account. If the account has more than max_errors_per_hour
+        in the last hour, disable it and mark it for high-priority reactivation.
+
+        Args:
+            username: Account username
+            error_msg: Optional error message to set
+            max_errors_per_hour: Maximum number of errors allowed in one hour (default: 5)
+
+        Returns:
+            bool: True if account was disabled due to excessive errors, False otherwise
+        """
+        account = await self.get(username)
+        now = utc.now()
+
+        # Add current error to history
+        account.error_history.append(now)
+
+        # Remove errors older than 1 hour
+        one_hour_ago = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=1)
+        account.error_history = [ts for ts in account.error_history if ts > one_hour_ago]
+
+        # Check if threshold exceeded
+        if len(account.error_history) > max_errors_per_hour:
+            account.active = False
+            account.error_msg = f"Auto-disabled: {len(account.error_history)} errors in 1 hour"
+            account.reactivation_priority = 100  # Highest priority
+            await self.save(account)
+            logger.warning(
+                f"Account {username} auto-disabled due to {len(account.error_history)} errors in 1 hour. "
+                f"Marked for high-priority reactivation."
+            )
+            return True
+        else:
+            # Update error message if provided but don't disable
+            if error_msg:
+                account.error_msg = error_msg
+            await self.save(account)
+            return False
+
+    async def clear_error_history(self, username: str):
+        """Clear the error history for an account (useful after successful reactivation)"""
+        account = await self.get(username)
+        account.error_history = []
+        account.reactivation_priority = 0
+        await self.save(account)
+
+    async def get_accounts_needing_reactivation(self):
+        """Get all inactive accounts sorted by reactivation priority (highest first)"""
+        qs = """
+        SELECT * FROM accounts
+        WHERE active = false
+        ORDER BY reactivation_priority DESC, username
+        """
+        rs = await fetchall(self._db_file, qs)
+        return [Account.from_rs(x) for x in rs]
 
     async def stats(self):
         def locks_count(queue: str):
