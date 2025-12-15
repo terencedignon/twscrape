@@ -366,11 +366,11 @@ class QueueClient:
             except Exception as e:
                 logger.debug(f"Failed to record error response in DB: {e}")
 
-        # Lock for 24 hours immediately on soft-ban detection
-        lockout_minutes = 1440  # 24 hours
+        # Lock for 6 hours on soft-ban detection
+        lockout_minutes = 360  # 6 hours
         logger.warning(
             f"SOFT-BAN: Account {username} on {self.queue} - "
-            f"locking for {lockout_minutes} minutes (24 hours)"
+            f"locking for {lockout_minutes} minutes (6 hours)"
         )
         await self._close_ctx(utc.ts() + 60 * lockout_minutes)
 
