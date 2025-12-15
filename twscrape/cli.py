@@ -98,6 +98,24 @@ async def main(args):
         await pool.reset_locks()
         return
 
+    if args.command == "unlock_tweets":
+        tweet_queues = [
+            "SearchTimeline",
+            "TweetDetail",
+            "UserTweets",
+            "UserTweetsAndReplies",
+            "ListLatestTweetsTimeline",
+            "CommunityTweetsTimeline",
+            "CommunityMediaTimeline",
+            "UserMedia",
+            "GenericTimelineById",
+            "Bookmarks",
+            "Retweeters",
+        ]
+        await pool.unlock_queues(tweet_queues)
+        print(f"Unlocked all accounts for tweet endpoints: {', '.join(tweet_queues)}")
+        return
+
     if args.command == "delete_inactive":
         await pool.delete_inactive()
         return
@@ -178,6 +196,7 @@ def run():
         cmd.add_argument("--manual", action="store_true", help="Enter email code manually")
 
     subparsers.add_parser("reset_locks", help="Reset all locks")
+    subparsers.add_parser("unlock_tweets", help="Unlock all accounts for tweet endpoints")
     subparsers.add_parser("delete_inactive", help="Delete inactive accounts")
 
     c_lim("search", "Search for tweets", "query", "Search query")
@@ -198,6 +217,7 @@ def run():
     c_lim("user_media", "Get user's media", "user_id", "User ID", int)
     c_lim("list_timeline", "Get tweets from list", "list_id", "List ID", int)
     c_lim("community_timeline", "Get tweets from community", "community_id", "Community ID", str)
+    c_lim("community_media_timeline", "Get media tweets from community", "community_id", "Community ID", str)
     c_one("community_members", "Get members from community", "community_id", "Community ID", str)
     c_lim("trends", "Get trends", "trend_id", "Trend ID or name", str)
 

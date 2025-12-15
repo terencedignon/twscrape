@@ -10,17 +10,18 @@ from .queue_client import QueueClient
 from .utils import encode_params, find_obj, get_by_path
 
 # OP_{NAME} – {NAME} should be same as second part of GQL ID (required to auto-update script)
-OP_SearchTimeline = "AIdc203rPpK_k_2KWSdm7g/SearchTimeline"
+OP_SearchTimeline = "bshMIjqDk8LTXTq4w91WKw/SearchTimeline"
 OP_UserByRestId = "WJ7rCtezBVT6nk6VM5R8Bw/UserByRestId"
-OP_UserByScreenName = "1VOOyvKkiI3FMmkeDNxM9A/UserByScreenName"
-OP_TweetDetail = "_8aYOgEDz35BrBcBal1-_w/TweetDetail"
-OP_Followers = "Elc_-qTARceHpztqhI9PQA/Followers"
-OP_Following = "C1qZ6bs-L3oc_TKSZyxkXQ/Following"
-OP_Retweeters = "i-CI8t2pJD15euZJErEDrg/Retweeters"
-OP_UserTweets = "HeWHY26ItCfUmm1e6ITjeA/UserTweets"
-OP_UserTweetsAndReplies = "OAx9yEcW3JA9bPo63pcYlA/UserTweetsAndReplies"
+OP_UserByScreenName = "-oaLodhGbbnzJBACb1kk2Q/UserByScreenName"
+OP_TweetDetail = "6QzqakNMdh_YzBAR9SYPkQ/TweetDetail"
+OP_Followers = "SCu9fVIlCUm-BM8-tL5pkQ/Followers"
+OP_Following = "S5xUN9s2v4xk50KWGGvyvQ/Following"
+OP_Retweeters = "IQ43ps3iEcdrGV_OL1QaRw/Retweeters"
+OP_UserTweets = "lZRf8IC-GTuGxDwcsHW8aw/UserTweets"
+OP_UserTweetsAndReplies = "gXCeOBFsTOuimuCl1qXimg/UserTweetsAndReplies"
 OP_ListLatestTweetsTimeline = "BkauSnPUDQTeeJsxq17opA/ListLatestTweetsTimeline"
 OP_CommunityTweetsTimeline = "mvvfN7tozrFnot9Rfbp_Mw/CommunityTweetsTimeline"
+OP_CommunityMediaTimeline = "DJ2AxDtvus2BfW5AvOhtaw/CommunityMediaTimeline"
 OP_membersSliceTimeline_Query = "WSbJGJjZaVasSj9bnqSZSA/membersSliceTimeline_Query"
 OP_AudioSpaceById = "rC2zlE1t7SHbVG8obPZliQ/AudioSpaceById"
 OP_AboutAccountQuery = "zs_jFPFT78rBpXv9Z3U2YQ/AboutAccountQuery"
@@ -29,6 +30,7 @@ OP_UserCreatorSubscriptions = "7qcGrVKpcooih_VvJLA1ng/UserCreatorSubscriptions"
 OP_UserMedia = "vFPc2LVIu7so2uA_gHQAdg/UserMedia"
 OP_Bookmarks = "-LGfdImKeQz0xS_jjUwzlA/Bookmarks"
 OP_GenericTimelineById = "CT0YFEFf5GOYa5DJcxM91w/GenericTimelineById"
+OP_ProfileSpotlightsQuery = "mzoqrVGwk-YTSGME1dRfXQ/ProfileSpotlightsQuery"
 
 GQL_URL = "https://x.com/i/api/graphql"
 GQL_FEATURES = {  # search values here (view source) https://x.com/
@@ -127,8 +129,10 @@ class API:
                     params["variables"]["cursor"] = cur
                 if queue in ("SearchTimeline", "ListLatestTweetsTimeline", "CommunityTweetsTimeline"):
                     params["fieldToggles"] = {"withArticleRichContentState": False}
-                if queue in ("UserMedia",):
+                if queue in ("UserMedia", "UserTweets", "UserTweetsAndReplies"):
                     params["fieldToggles"] = {"withArticlePlainText": False}
+                if queue in ("TweetDetail",):
+                    params["fieldToggles"] = {"withArticleRichContentState": True, "withArticlePlainText": False, "withGrokAnalyze": False, "withDisallowedReplyControls": False}
 
                 rep = await client.get(f"{GQL_URL}/{op}", params=encode_params(params))
                 if rep is None:
@@ -169,8 +173,10 @@ class API:
                     params["variables"]["cursor"] = cur
                 if queue in ("SearchTimeline", "ListLatestTweetsTimeline", "CommunityTweetsTimeline"):
                     params["fieldToggles"] = {"withArticleRichContentState": False}
-                if queue in ("UserMedia",):
+                if queue in ("UserMedia", "UserTweets", "UserTweetsAndReplies"):
                     params["fieldToggles"] = {"withArticlePlainText": False}
+                if queue in ("TweetDetail",):
+                    params["fieldToggles"] = {"withArticleRichContentState": True, "withArticlePlainText": False, "withGrokAnalyze": False, "withDisallowedReplyControls": False}
 
                 rep = await client.get(f"{GQL_URL}/{op}", params=encode_params(params))
                 if rep is None:
@@ -198,11 +204,13 @@ class API:
                 # CRITICAL: Update cur for next iteration to advance pagination
                 cur = next_cursor
 
-    async def _gql_item(self, op: str, kv: dict, ft: dict | None = None):
+    async def _gql_item(self, op: str, kv: dict, ft: dict | None = None, field_toggles: dict | None = None):
         ft = ft or {}
         queue = op.split("/")[-1]
         async with QueueClient(self.pool, queue, self.debug, proxy=self.proxy) as client:
             params = {"variables": {**kv}, "features": {**GQL_FEATURES, **ft}}
+            if field_toggles:
+                params["fieldToggles"] = field_toggles
             return await client.get(f"{GQL_URL}/{op}", params=encode_params(params))
 
     # search
@@ -226,6 +234,34 @@ class API:
             async for rep in gen:
                 for x in parse_tweets(rep.json(), limit):
                     yield x
+
+    async def search_with_cursor(self, q: str, limit=-1, kv: KV = None):
+        """
+        Same as search but yields (tweet, cursor) tuples for resumable pagination.
+
+        The cursor can be saved and passed back in kv={'cursor': saved_cursor}
+        to resume pagination from where you left off.
+
+        Example:
+            last_cursor = None
+            async for tweet, cursor in api.search_with_cursor("python", limit=1000):
+                print(tweet.rawContent)
+                last_cursor = cursor
+            # Save last_cursor to database for resumption
+        """
+        op = OP_SearchTimeline
+        kv = {
+            "rawQuery": q,
+            "count": 20,
+            "product": "Latest",
+            "querySource": "typed_query",
+            "withGrokTranslatedBio": False,
+            **(kv or {}),
+        }
+        async with aclosing(self._gql_items_with_cursor(op, kv, limit=limit)) as gen:
+            async for rep, cursor in gen:
+                for tweet in parse_tweets(rep.json(), limit):
+                    yield tweet, cursor
 
     async def search_user(self, q: str, limit=-1, kv: KV = None):
         kv = {"product": "People", **(kv or {})}
@@ -274,7 +310,8 @@ class API:
             "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
             "responsive_web_graphql_timeline_navigation_enabled": True,
         }
-        return await self._gql_item(op, kv, ft)
+        field_toggles = {"withPayments": False, "withAuxiliaryUserLabels": True}
+        return await self._gql_item(op, kv, ft, field_toggles)
 
     async def user_by_login(self, login: str, kv: KV = None) -> User | None:
         rep = await self.user_by_login_raw(login, kv=kv)
@@ -649,6 +686,80 @@ class API:
                 for x in parse_tweets(rep, limit):
                     yield x
 
+    async def community_timeline_with_cursor(self, community_id: str, limit=-1, kv: KV = None):
+        """
+        Same as community_timeline but yields (tweet, cursor) tuples for resumable pagination.
+
+        The cursor can be saved and passed back in kv={'cursor': saved_cursor}
+        to resume pagination from where you left off.
+
+        Example:
+            last_cursor = None
+            async for tweet, cursor in api.community_timeline_with_cursor(community_id, limit=1000):
+                print(tweet.rawContent)
+                last_cursor = cursor
+            # Save last_cursor to database for resumption
+        """
+        op = OP_CommunityTweetsTimeline
+        kv = {
+            "communityId": str(community_id),
+            "count": 20,
+            "displayLocation": "Community",
+            "rankingMode": "Relevance",
+            "withCommunity": True,
+            **(kv or {}),
+        }
+        async with aclosing(self._gql_items_with_cursor(op, kv, limit=limit)) as gen:
+            async for rep, cursor in gen:
+                for tweet in parse_tweets(rep, limit):
+                    yield tweet, cursor
+
+    # community_media_timeline
+
+    async def community_media_timeline_raw(self, community_id: str, limit=-1, kv: KV = None):
+        op = OP_CommunityMediaTimeline
+        kv = {
+            "communityId": str(community_id),
+            "count": 20,
+            "withCommunity": True,
+            **(kv or {}),
+        }
+        async with aclosing(self._gql_items(op, kv, limit=limit)) as gen:
+            async for x in gen:
+                yield x
+
+    async def community_media_timeline(self, community_id: str, limit=-1, kv: KV = None):
+        async with aclosing(self.community_media_timeline_raw(community_id, limit=limit, kv=kv)) as gen:
+            async for rep in gen:
+                for x in parse_tweets(rep, limit):
+                    yield x
+
+    async def community_media_timeline_with_cursor(self, community_id: str, limit=-1, kv: KV = None):
+        """
+        Same as community_media_timeline but yields (tweet, cursor) tuples for resumable pagination.
+
+        The cursor can be saved and passed back in kv={'cursor': saved_cursor}
+        to resume pagination from where you left off.
+
+        Example:
+            last_cursor = None
+            async for tweet, cursor in api.community_media_timeline_with_cursor(community_id, limit=1000):
+                print(tweet.rawContent)
+                last_cursor = cursor
+            # Save last_cursor to database for resumption
+        """
+        op = OP_CommunityMediaTimeline
+        kv = {
+            "communityId": str(community_id),
+            "count": 20,
+            "withCommunity": True,
+            **(kv or {}),
+        }
+        async with aclosing(self._gql_items_with_cursor(op, kv, limit=limit)) as gen:
+            async for rep, cursor in gen:
+                for tweet in parse_tweets(rep, limit):
+                    yield tweet, cursor
+
     # community_members
 
     async def community_members_raw(self, community_id: str, kv: KV = None):
@@ -691,6 +802,48 @@ class API:
     async def about_account(self, screen_name: str, kv: KV = None):
         """Returns raw account about data (no parsing implemented yet)"""
         return await self.about_account_raw(screen_name, kv=kv)
+
+    # profile_spotlights
+
+    async def profile_spotlights_raw(self, screen_name: str, kv: KV = None):
+        """Get profile spotlight modules (communities, etc.) for a user."""
+        op = OP_ProfileSpotlightsQuery
+        kv = {"screen_name": screen_name, **(kv or {})}
+        return await self._gql_item(op, kv)
+
+    async def profile_spotlights(self, screen_name: str, kv: KV = None):
+        """
+        Returns profile spotlight data including communities the user has spotlighted.
+
+        Returns dict with:
+        - communities: List of community dicts with id, name, member_count, description
+        """
+        result = await self.profile_spotlights_raw(screen_name, kv=kv)
+        if hasattr(result, 'json'):
+            data = result.json()
+        else:
+            data = result
+
+        # Parse communities from profile modules
+        communities = []
+        user_result = data.get('data', {}).get('user_result_by_screen_name', {}).get('result', {})
+        modules = user_result.get('profilemodules', {}).get('v1', [])
+
+        for module in modules:
+            pm = module.get('profile_module', {})
+            if pm.get('__typename') == 'CommunitiesModule':
+                config = pm.get('config', {})
+                community = config.get('community_results', {}).get('result', {})
+                if community:
+                    communities.append({
+                        'id': int(community.get('rest_id', 0)),
+                        'id_str': community.get('rest_id'),
+                        'name': community.get('name'),
+                        'description': community.get('description'),
+                        'member_count': community.get('member_count'),
+                    })
+
+        return {'communities': communities}
 
     # trends
 

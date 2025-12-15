@@ -63,18 +63,36 @@ class Account(JSONTrait):
         transport = AsyncHTTPTransport(retries=3)
         client = AsyncClient(proxy=proxy, follow_redirects=True, transport=transport)
 
-        # saved from previous usage
-        client.cookies.update(self.cookies)
+        # CRITICAL: Only set essential cookies - other cookies (twid, guest_id, kdt, etc.)
+        # cause 404 responses on endpoints like UserTweetsAndReplies
+        if "auth_token" in self.cookies:
+            client.cookies.set("auth_token", self.cookies["auth_token"])
+        if "ct0" in self.cookies:
+            client.cookies.set("ct0", self.cookies["ct0"])
+
+        # Apply any saved headers
         client.headers.update(self.headers)
 
-        # default settings
+        # Default Twitter API settings
         client.headers["user-agent"] = self.user_agent
         client.headers["content-type"] = "application/json"
         client.headers["authorization"] = TOKEN
         client.headers["x-twitter-active-user"] = "yes"
+        client.headers["x-twitter-auth-type"] = "OAuth2Session"
         client.headers["x-twitter-client-language"] = "en"
 
-        if "ct0" in client.cookies:
-            client.headers["x-csrf-token"] = client.cookies["ct0"]
+        # Browser fingerprint headers - required to avoid 404 on some endpoints
+        client.headers["accept"] = "*/*"
+        client.headers["accept-language"] = "en-US,en;q=0.9"
+        client.headers["sec-ch-ua"] = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'
+        client.headers["sec-ch-ua-mobile"] = "?0"
+        client.headers["sec-ch-ua-platform"] = '"macOS"'
+        client.headers["sec-fetch-dest"] = "empty"
+        client.headers["sec-fetch-mode"] = "cors"
+        client.headers["sec-fetch-site"] = "same-origin"
+        client.headers["priority"] = "u=1, i"
+
+        if "ct0" in self.cookies:
+            client.headers["x-csrf-token"] = self.cookies["ct0"]
 
         return client

@@ -216,6 +216,12 @@ class AccountsPool:
         qs = "UPDATE accounts SET locks = json_object()"
         await execute(self._db_file, qs)
 
+    async def unlock_queues(self, queues: list[str]):
+        """Unlock all accounts for specific queues/endpoints."""
+        for queue in queues:
+            qs = f"UPDATE accounts SET locks = json_remove(locks, '$.{queue}')"
+            await execute(self._db_file, qs)
+
     async def set_active(self, username: str, active: bool):
         qs = "UPDATE accounts SET active = :active WHERE username = :username"
         await execute(self._db_file, qs, {"username": username, "active": active})
