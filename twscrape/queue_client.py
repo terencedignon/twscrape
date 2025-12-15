@@ -207,25 +207,25 @@ class QueueClient:
             await self._close_ctx(limit_reset)
             raise HandledError()
 
-        # Error 88 with remaining > 0 indicates possible ban - use exponential backoff
+        # Error 88 with remaining > 0 indicates soft-ban - lock out immediately
         if err_msg.startswith("(88) Rate limit exceeded") and limit_remaining > 0:
             self._log_rate_limit_response(rep, err_msg, "error_88_ban")
-            await self._handle_ban_strike(err_msg)
+            await self._handle_ban_strike(err_msg, rep)
             raise HandledError()
 
         if err_msg.startswith("(326) Authorization: Denied by access control"):
-            logger.warning(f"Ban detected: {log_msg}")
-            await self._close_ctx(-1, inactive=True, msg=err_msg)
+            logger.warning(f"Ban detected (326): {log_msg}")
+            await self._deactivate_with_response(rep, err_msg)
             raise HandledError()
 
         if err_msg.startswith("(32) Could not authenticate you"):
-            logger.warning(f"Session expired or banned: {log_msg}")
-            await self._close_ctx(-1, inactive=True, msg=err_msg)
+            logger.warning(f"Auth failed (32): {log_msg}")
+            await self._deactivate_with_response(rep, err_msg)
             raise HandledError()
 
         if err_msg == "OK" and rep.status_code == 403:
-            logger.warning(f"Session expired or banned: {log_msg}")
-            await self._close_ctx(-1, inactive=True, msg=None)
+            logger.warning(f"Ban detected (403 Forbidden): {log_msg}")
+            await self._deactivate_with_response(rep, "403 Forbidden - session expired or banned")
             raise HandledError()
 
         # something from twitter side - abort all queries, see: https://github.com/vladkens/twscrape/pull/80
@@ -246,6 +246,47 @@ class QueueClient:
         if rep.status_code == 200 and "Authorization" in err_msg:
             logger.warning(f"Authorization unknown error: {log_msg}")
             return
+
+        # Handle code 0 OperationalErrors - Twitter's GraphQL returning partial data
+        # These are not real errors - data is still present, just some nested fields failed
+        if rep.status_code == 200 and "(0)" in err_msg and "data" in res:
+            # Check if all errors are code 0 (operational errors)
+            all_code_zero = all(
+                e.get("code") == 0 or e.get("kind") == "Operational"
+                for e in res.get("errors", [])
+            )
+            if all_code_zero:
+                logger.debug(f"Operational error (data present, treating as success): {log_msg}")
+                # Record to DB for tracking but don't treat as error
+                if self.ctx is not None and hasattr(self.pool, 'record_operational_error'):
+                    try:
+                        # Extract endpoint from URL
+                        url_str = str(rep.url)
+                        endpoint_name = "unknown"
+                        if "/graphql/" in url_str:
+                            parts = url_str.split("/graphql/")[1].split("/")
+                            if len(parts) >= 2:
+                                endpoint_name = parts[1].split("?")[0]
+
+                        # Build response summary for storage
+                        error_summary = {
+                            "errors": res.get("errors", []),
+                            "data_keys": list(res.get("data", {}).keys()) if isinstance(res.get("data"), dict) else "present",
+                            "status_code": rep.status_code,
+                            "url": url_str[:500],  # Truncate URL
+                        }
+                        await self.pool.record_operational_error(
+                            self.ctx.acc.username,
+                            endpoint_name,
+                            json.dumps(error_summary, indent=2)
+                        )
+                    except Exception as e:
+                        logger.debug(f"Failed to record operational error: {e}")
+
+                # Treat as success - reset soft error counter
+                if self.ctx:
+                    self._reset_soft_errors(self.ctx.acc.username)
+                return  # Continue processing - data is valid
 
         if err_msg != "OK":
             logger.warning(f"API unknown error: {log_msg}")
@@ -281,42 +322,102 @@ class QueueClient:
         if username in QueueClient._ban_strikes:
             del QueueClient._ban_strikes[username]
 
-    async def _handle_ban_strike(self, err_msg: str):
+    async def _handle_ban_strike(self, err_msg: str, rep: Response | None = None):
         """
-        Handle error 88 (rate limit exceeded with remaining > 0) with exponential backoff.
+        Handle error 88 (rate limit exceeded with remaining > 0) - SOFT BAN.
 
-        Strike 1: 15 min backoff
-        Strike 2: 30 min backoff
-        Strike 3: 60 min backoff
-        Strike 4: 120 min backoff
-        Strike 5: Mark inactive
+        Immediately locks account for 24 hours for this queue.
+        Records soft-ban and full error response in database if pool supports it.
         """
         if self.ctx is None:
             return
 
         username = self.ctx.acc.username
-        QueueClient._ban_strikes[username] = QueueClient._ban_strikes.get(username, 0) + 1
-        strikes = QueueClient._ban_strikes[username]
 
-        if strikes >= QueueClient._ban_strike_max:
-            logger.warning(
-                f"Account {username} hit {strikes} ban strikes, marking inactive"
-            )
-            del QueueClient._ban_strikes[username]
-            await self._close_ctx(-1, inactive=True, msg=err_msg)
-            return
+        # Determine endpoint type from queue name
+        endpoint_type = self._get_endpoint_type_from_queue()
 
-        # Exponential backoff: 60, 120, 240, 480, then remainder to reach 24hr total
-        # Total: 60 + 120 + 240 + 480 + 540 = 1440 min (24hr)
-        base_backoff = QueueClient._ban_backoff_base_minutes * (2 ** (strikes - 1))
-        cumulative_so_far = sum(60 * (2 ** i) for i in range(strikes - 1))  # Previous backoffs
-        remaining_to_24hr = 1440 - cumulative_so_far
-        backoff_minutes = min(base_backoff, remaining_to_24hr)
+        # Try to record soft-ban in database (if pool supports it)
+        try:
+            if hasattr(self.pool, 'record_soft_ban'):
+                await self.pool.record_soft_ban(username, endpoint_type)
+        except Exception as e:
+            logger.debug(f"Failed to record soft-ban in DB: {e}")
+
+        # Try to store full error response (if pool supports it)
+        if rep is not None:
+            try:
+                if hasattr(self.pool, 'record_error_response'):
+                    # Get full response text
+                    response_text = rep.text
+                    # Include headers in the stored response
+                    full_response = {
+                        "status_code": rep.status_code,
+                        "headers": dict(rep.headers),
+                        "body": response_text,
+                        "url": str(rep.url),
+                    }
+                    import json
+                    await self.pool.record_error_response(
+                        username,
+                        self.queue,
+                        json.dumps(full_response, indent=2)
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to record error response in DB: {e}")
+
+        # Lock for 24 hours immediately on soft-ban detection
+        lockout_minutes = 1440  # 24 hours
         logger.warning(
-            f"Account {username} ban strike {strikes}/{QueueClient._ban_strike_max}, "
-            f"backing off for {backoff_minutes} minutes"
+            f"SOFT-BAN: Account {username} on {self.queue} - "
+            f"locking for {lockout_minutes} minutes (24 hours)"
         )
-        await self._close_ctx(utc.ts() + 60 * backoff_minutes)
+        await self._close_ctx(utc.ts() + 60 * lockout_minutes)
+
+    def _get_endpoint_type_from_queue(self) -> str:
+        """Map queue name to endpoint type for tracking."""
+        queue_lower = self.queue.lower()
+        if 'tweet' in queue_lower or 'usertweetsandreplies' in queue_lower or 'usertweets' in queue_lower:
+            return 'tweet'
+        elif 'search' in queue_lower:
+            return 'search'
+        elif 'follow' in queue_lower:
+            return 'follower'
+        elif 'list' in queue_lower:
+            return 'list'
+        elif 'community' in queue_lower:
+            return 'community'
+        else:
+            return 'tweet'  # default
+
+    async def _deactivate_with_response(self, rep: Response, error_msg: str):
+        """
+        Deactivate account and store full response for debugging.
+
+        Args:
+            rep: The HTTP response that triggered deactivation
+            error_msg: Human-readable error message to store
+        """
+        # Store full response for debugging
+        if self.ctx is not None:
+            try:
+                if hasattr(self.pool, 'record_error_response'):
+                    full_response = {
+                        "status_code": rep.status_code,
+                        "headers": dict(rep.headers),
+                        "body": rep.text,
+                        "url": str(rep.url),
+                        "request_headers": dict(rep.request.headers) if rep.request else {},
+                    }
+                    await self.pool.record_error_response(
+                        self.ctx.acc.username,
+                        self.queue,
+                        json.dumps(full_response, indent=2)
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to record error response: {e}")
+
+        await self._close_ctx(-1, inactive=True, msg=error_msg)
 
     async def _handle_soft_error(self, err_msg: str):
         """
