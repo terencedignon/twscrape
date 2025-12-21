@@ -31,6 +31,7 @@ OP_UserMedia = "vFPc2LVIu7so2uA_gHQAdg/UserMedia"
 OP_Bookmarks = "-LGfdImKeQz0xS_jjUwzlA/Bookmarks"
 OP_GenericTimelineById = "CT0YFEFf5GOYa5DJcxM91w/GenericTimelineById"
 OP_ProfileSpotlightsQuery = "mzoqrVGwk-YTSGME1dRfXQ/ProfileSpotlightsQuery"
+OP_CreateTweet = "Uf3io9zVp1DsYxrmL5FJ7g/CreateTweet"
 
 GQL_URL = "https://x.com/i/api/graphql"
 GQL_FEATURES = {  # search values here (view source) https://x.com/
@@ -212,6 +213,18 @@ class API:
             if field_toggles:
                 params["fieldToggles"] = field_toggles
             return await client.get(f"{GQL_URL}/{op}", params=encode_params(params))
+
+    async def _gql_mutation(self, op: str, kv: dict, ft: dict | None = None):
+        """Execute a GraphQL mutation (POST request with JSON body)."""
+        ft = ft or {}
+        queue = op.split("/")[-1]
+        async with QueueClient(self.pool, queue, self.debug, proxy=self.proxy) as client:
+            payload = {
+                "variables": {**kv},
+                "features": {**GQL_FEATURES, **ft},
+                "queryId": op.split("/")[0],
+            }
+            return await client.post(f"{GQL_URL}/{op}", payload)
 
     # search
 
@@ -901,3 +914,100 @@ class API:
             async for rep in gen:
                 for x in parse_tweets(rep.json(), limit):
                     yield x
+
+    # create_tweet
+
+    async def create_tweet_raw(
+        self,
+        text: str,
+        *,
+        media_ids: list[str] | None = None,
+        reply_to_tweet_id: int | None = None,
+        quote_tweet_id: int | None = None,
+        possibly_sensitive: bool = False,
+        kv: KV = None,
+    ):
+        """
+        Create a tweet.
+
+        Args:
+            text: The text content of the tweet
+            media_ids: List of media IDs to attach (from media upload endpoint)
+            reply_to_tweet_id: Tweet ID to reply to
+            quote_tweet_id: Tweet ID to quote
+            possibly_sensitive: Mark tweet as containing sensitive content
+            kv: Additional variables to merge
+
+        Returns:
+            Raw API response
+        """
+        op = OP_CreateTweet
+        kv = {
+            "tweet_text": text,
+            "dark_request": False,
+            "media": {
+                "media_entities": [{"media_id": mid, "tagged_users": []} for mid in (media_ids or [])],
+                "possibly_sensitive": possibly_sensitive,
+            },
+            "semantic_annotation_ids": [],
+            "broadcast": False,
+            "disallowed_reply_options": None,
+            **(kv or {}),
+        }
+
+        # Handle reply
+        if reply_to_tweet_id is not None:
+            kv["reply"] = {
+                "in_reply_to_tweet_id": str(reply_to_tweet_id),
+                "exclude_reply_user_ids": [],
+            }
+
+        # Handle quote tweet
+        if quote_tweet_id is not None:
+            kv["quote_tweet_id"] = str(quote_tweet_id)
+
+        return await self._gql_mutation(op, kv)
+
+    async def create_tweet(
+        self,
+        text: str,
+        *,
+        media_ids: list[str] | None = None,
+        reply_to_tweet_id: int | None = None,
+        quote_tweet_id: int | None = None,
+        possibly_sensitive: bool = False,
+        kv: KV = None,
+    ) -> Tweet | None:
+        """
+        Create a tweet and return the created Tweet object.
+
+        Args:
+            text: The text content of the tweet
+            media_ids: List of media IDs to attach (from media upload endpoint)
+            reply_to_tweet_id: Tweet ID to reply to
+            quote_tweet_id: Tweet ID to quote
+            possibly_sensitive: Mark tweet as containing sensitive content
+            kv: Additional variables to merge
+
+        Returns:
+            Tweet object if successful, None otherwise
+        """
+        rep = await self.create_tweet_raw(
+            text,
+            media_ids=media_ids,
+            reply_to_tweet_id=reply_to_tweet_id,
+            quote_tweet_id=quote_tweet_id,
+            possibly_sensitive=possibly_sensitive,
+            kv=kv,
+        )
+        if rep is None:
+            return None
+
+        data = rep.json()
+        # Extract tweet from response
+        tweet_result = get_by_path(data, "create_tweet")
+        if tweet_result:
+            tweet_results = tweet_result.get("tweet_results", {})
+            if tweet_results:
+                return parse_tweet({"data": {"tweetResult": tweet_results}})
+        return None

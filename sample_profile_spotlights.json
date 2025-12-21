@@ -1,0 +1,213 @@
+{
+  "data": {
+    "user_result_by_screen_name": {
+      "result": {
+        "__typename": "User",
+        "privacy": {
+          "protected": false
+        },
+        "relationship_perspectives": {
+          "blocking": false,
+          "blocked_by": false,
+          "following": false,
+          "followed_by": false
+        },
+        "rest_id": "1824835160606732288",
+        "core": {
+          "name": "WULF",
+          "screen_name": "DerWulf"
+        },
+        "is_verified_organization": false,
+        "profilemodules": {
+          "v1": [
+            {
+              "profile_module": {
+                "__typename": "CommunitiesModule",
+                "__isProfileModule": "CommunitiesModule",
+                "config": {
+                  "community_results": {
+                    "result": {
+                      "__typename": "Community",
+                      "members_facepile_results": [
+                        {
+                          "result": {
+                            "__typename": "User",
+                            "avatar": {
+                              "image_url": "https://pbs.twimg.com/profile_images/1996556827220463616/yptPX_4L_normal.jpg"
+                            },
+                            "id": "VXNlcjoxODI0ODM1MTYwNjA2NzMyMjg4"
+                          },
+                          "id": "VXNlclJlc3VsdHM6MTgyNDgzNTE2MDYwNjczMjI4OA=="
+                        },
+                        {
+                          "result": {
+                            "__typename": "User",
+                            "avatar": {
+                              "image_url": "https://pbs.twimg.com/profile_images/1971401898071621632/TnFXWZ7g_normal.jpg"
+                            },
+                            "id": "VXNlcjoxODA1MzM1OTM2MzA3MjQ5MTUz"
+                          },
+                          "id": "VXNlclJlc3VsdHM6MTgwNTMzNTkzNjMwNzI0OTE1Mw=="
+                        },
+                        {
+                          "result": {
+                            "__typename": "User",
+                            "avatar": {
+                              "image_url": "https://pbs.twimg.com/profile_images/1978275365794824192/FGpFlUUQ_normal.jpg"
+                            },
+                            "id": "VXNlcjo0NDQ5NTY1NzUy"
+                          },
+                          "id": "VXNlclJlc3VsdHM6NDQ0OTU2NTc1Mg=="
+                        },
+                        {
+                          "result": {
+                            "__typename": "User",
+                            "avatar": {
+                              "image_url": "https://pbs.twimg.com/profile_images/1788127630996201474/kITDtHy__normal.jpg"
+                            },
+                            "id": "VXNlcjoxNDcwNjEwOTI0MTAwNzM0OTc2"
+                          },
+                          "id": "VXNlclJlc3VsdHM6MTQ3MDYxMDkyNDEwMDczNDk3Ng=="
+                        },
+                        {
+                          "result": {
+                            "__typename": "User",
+                            "avatar": {
+                              "image_url": "https://pbs.twimg.com/profile_images/1882280298819325952/ouYARPZR_normal.jpg"
+                            },
+                            "id": "VXNlcjoxODUzODIzMDc4MTM0MTM2ODMy"
+                          },
+                          "id": "VXNlclJlc3VsdHM6MTg1MzgyMzA3ODEzNDEzNjgzMg=="
+                        }
+                      ],
+                      "member_count": 583,
+                      "default_banner_media": {
+                        "media_info": {
+                          "__typename": "ApiImage",
+                          "color_info": {
+                            "palette": [
+                              {
+                                "rgb": {
+                                  "red": 203,
+                                  "green": 132,
+                                  "blue": 230
+                                },
+                                "percentage": 46.69
+                              },
+                              {
+                                "rgb": {
+                                  "red": 139,
+                                  "green": 223,
+                                  "blue": 186
+                                },
+                                "percentage": 27.85
+                              },
+                              {
+                                "rgb": {
+                                  "red": 184,
+                                  "green": 208,
+                                  "blue": 214
+                                },
+                                "percentage": 7.9
+                              },
+                              {
+                                "rgb": {
+                                  "red": 200,
+                                  "green": 173,
+                                  "blue": 225
+                                },
+                                "percentage": 7.34
+                              },
+                              {
+                                "rgb": {
+                                  "red": 180,
+                                  "green": 104,
+                                  "blue": 226
+                                },
+                                "percentage": 4.53
+                              }
+                            ]
+                          },
+                          "original_img_url": "https://pbs.twimg.com/media/FECS1tvVUAEk_AI.jpg",
+                          "original_img_width": 1200,
+                          "original_img_height": 480
+                        },
+                        "id": "QXBpTWVkaWE6DAABCgABFECS1tvVUAEKAAITiFWq8lUQBAAA"
+                      },
+                      "custom_banner_media": {
+                        "media_info": {
+                          "__typename": "ApiImage",
+                          "color_info": {
+                            "palette": [
+                              {
+                                "rgb": {
+                                  "red": 2,
+                                  "green": 2,
+                                  "blue": 2
+                                },
+                                "percentage": 55.88
+                              },
+                              {
+                                "rgb": {
+                                  "red": 64,
+                                  "green": 13,
+                                  "blue": 6
+                                },
+                                "percentage": 9.8
+                              },
+                              {
+                                "rgb": {
+                                  "red": 122,
+                                  "green": 28,
+                                  "blue": 10
+                                },
+                                "percentage": 6.28
+                              },
+                              {
+                                "rgb": {
+                                  "red": 63,
+                                  "green": 58,
+                                  "blue": 31
+                                },
+                                "percentage": 5.55
+                              },
+                              {
+                                "rgb": {
+                                  "red": 248,
+                                  "green": 238,
+                                  "blue": 132
+                                },
+                                "percentage": 5.32
+                              }
+                            ]
+                          },
+                          "original_img_url": "https://pbs.twimg.com/community_banner_img/1970667430751137792/BTYt71Se?format=jpg&name=orig",
+                          "original_img_width": 1250,
+                          "original_img_height": 500,
+                          "salient_rect": {
+                            "left": 659,
+                            "top": 249,
+                            "width": 1,
+                            "height": 1
+                          }
+                        },
+                        "id": "QXBpTWVkaWE6DAATCgABG1k3llRacAAAAA=="
+                      },
+                      "description": "Christ is our king, and we must restore faith, defend our identity, and instill fear in God once more. They despise us and our Lord, Jesus Christ.",
+                      "name": "Wulf\u2019s Frens",
+                      "rest_id": "1882285606447071432",
+                      "id": "Q29tbXVuaXR5OjE4ODIyODU2MDY0NDcwNzE0MzI="
+                    },
+                    "id": "Q29tbXVuaXR5UmVzdWx0czoxODgyMjg1NjA2NDQ3MDcxNDMy"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "id": "VXNlcjoxODI0ODM1MTYwNjA2NzMyMjg4"
+      },
+      "id": "VXNlclJlc3VsdHM6MTgyNDgzNTE2MDYwNjczMjI4OA=="
+    }
+  }
+}
